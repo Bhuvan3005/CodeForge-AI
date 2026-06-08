@@ -1,0 +1,30 @@
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+
+# MongoDB
+motor==3.6.0
+pymongo==4.9.2
+
+# Pydantic
+pydantic[email]==2.9.2
+pydantic-settings==2.5.2
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib==1.7.4
+bcrypt==4.2.0
+
+# Email
+aiosmtplib==3.0.2
+
+# Env
+python-dotenv==1.0.1
+
+# Multipart form support
+python-multipart==0.0.12
+
+
+streamlit
+requests

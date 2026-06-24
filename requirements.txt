@@ -25,6 +25,10 @@ python-dotenv==1.0.1
 # Multipart form support
 python-multipart==0.0.12
 
+# LangGraph + AI
+langgraph>=0.2.0
+google-generativeai>=0.8.0
 
+# Frontend
 streamlit
 requests

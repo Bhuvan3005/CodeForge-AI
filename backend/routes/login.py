@@ -4,7 +4,7 @@ from services.auth import (
     login_user,
     get_current_user
 )
-from schemas.users import UserRegister, UserLogin, Token
+from schemas.users import UserRegister, UserLogin, Token, UserResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
 
@@ -29,7 +29,7 @@ async def login(
         form_data.password
     )
 
-@router.get("/me")
+@router.get("/me", response_model=UserResponse)
 async def me(current_user=Depends(get_current_user)):
     """Get current authenticated user info"""
     return {

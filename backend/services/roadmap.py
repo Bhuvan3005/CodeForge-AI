@@ -1,12 +1,16 @@
 """
-Roadmap Service for CodeForge.
+Roadmap Service
 
-Manages user learning roadmaps, skill profiles, and progression
-through the adaptive curriculum.
+Handles
+
+- Skill Profiles
+- Learning Roadmap
+- Adaptive Recommendations
+- Progress Tracking
 """
 
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, List
 from bson import ObjectId
 
 from schemas.submissions import (
@@ -14,7 +18,7 @@ from schemas.submissions import (
     SkillUpdateResult,
     SkillStats,
     Roadmap,
-    RoadmapDecision
+    RoadmapDecision,
 )
 
 from database import (
@@ -24,355 +28,789 @@ from database import (
     generated_problems_collection,
 )
 
+TOPIC_ORDER = [
 
-async def get_or_create_skill_profile(user_id: str) -> SkillProfile:
-    """Fetch the user's skill profile, creating a blank one if none exists."""
-    profile = await skill_profiles_collection.find_one({"user_id": user_id})
-    if profile:
-        profile["id"] = str(profile["_id"])
-        # Ensure stats has default dict keys if it is a raw dict
-        if "stats" not in profile:
-            profile["stats"] = SkillStats().model_dump()
-        return SkillProfile(**profile)
+    "Arrays",
 
-    now = datetime.now(timezone.utc)
+    "Two Pointers",
 
-    new_profile = {
-        "user_id": user_id,
-        "mastery_scores": {},
-        "stats": SkillStats().model_dump(),
-        "created_at": now,
-        "updated_at": now
-    }
-    result = await skill_profiles_collection.insert_one(new_profile)
-    new_profile["id"] = str(result.inserted_id)
-    return SkillProfile(**new_profile)
+    "Sliding Window",
+
+    "Binary Search",
+
+    "Stack",
+
+    "Queue",
+
+    "Linked List",
+
+    "Trees",
+
+    "Graphs",
+
+    "Heap",
+
+    "Greedy",
+
+    "Backtracking",
+
+    "Dynamic Programming",
+]
+
+MASTERY_THRESHOLD = 70
+
+MAX_SCORE = 100
+
+MIN_SCORE = 0
 
 
-async def get_or_create_roadmap(user_id: str) -> Roadmap:
-    """Fetch the user's roadmap, creating a default one if none exists."""
-    roadmap = await roadmaps_collection.find_one({"user_id": user_id})
-    if roadmap:
-        roadmap["id"] = str(roadmap["_id"])
-        return Roadmap(**roadmap)
-
-    new_roadmap = {
-        "user_id": user_id,
-        "current_topic": None,
-        "current_subtopic": None,
-        "completed_topics": [],
-        "completed_subtopics": [],
-        "remediation_queue": [],
-        "difficulty": "Easy",
-        "active_remediation": None,
-        "completed_problem_ids": [],
-        "mode": "normal",
-        "active_problem_id": None,
-        "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc)
-    }
     
-    result = await roadmaps_collection.insert_one(new_roadmap)
-    new_roadmap["id"] = str(result.inserted_id)
-    return Roadmap(**new_roadmap)
+def clamp_score(score: int) -> int:
+    """
+    Keep mastery score between
+    0 and 100.
+    """
+
+    return max(
+        MIN_SCORE,
+        min(MAX_SCORE, score),
+    )
+    
+def difficulty_for_mastery(
+    mastery: float,
+) -> str:
+    """
+    Decide roadmap difficulty from
+    average mastery.
+    """
+
+    if mastery < 40:
+        return "Easy"
+
+    if mastery < 75:
+        return "Medium"
+
+    return "Hard"
+
+def next_topic(
+    current: str | None,
+) -> str | None:
+    """
+    Return the next curriculum topic.
+    """
+
+    if current is None:
+        return TOPIC_ORDER[0]
+
+    if current not in TOPIC_ORDER:
+        return TOPIC_ORDER[0]
+
+    index = TOPIC_ORDER.index(
+        current
+    )
+
+    if index == len(TOPIC_ORDER) - 1:
+        return None
+
+    return TOPIC_ORDER[index + 1]
+
+async def get_or_create_skill_profile(
+    user_id: str,
+) -> SkillProfile:
+    """
+    Fetch existing profile or
+    create a new one.
+    """
+
+    profile = await skill_profiles_collection.find_one(
+        {
+            "user_id": user_id
+        }
+    )
+
+    if profile:
+
+        profile.pop("_id", None)
+
+        profile.setdefault(
+            "stats",
+            SkillStats().model_dump(),
+        )
+
+        return SkillProfile(
+            **profile
+        )
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    document = {
+
+        "user_id": user_id,
+
+        "mastery_scores": {},
+
+        "stats": SkillStats().model_dump(),
+
+        "created_at": now,
+
+        "updated_at": now,
+    }
+
+    await skill_profiles_collection.insert_one(
+        document
+    )
+
+    return SkillProfile(
+        **document
+    )
+    
+async def get_or_create_roadmap(
+    user_id: str,
+) -> Roadmap:
+    """
+    Fetch user's roadmap or create
+    a fresh roadmap.
+    """
+
+    roadmap = await roadmaps_collection.find_one(
+        {
+            "user_id": user_id
+        }
+    )
+
+    if roadmap:
+
+        roadmap.pop(
+            "_id",
+            None,
+        )
+
+        return Roadmap(
+            **roadmap
+        )
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    roadmap = {
+
+        "user_id": user_id,
+
+        "current_topic": None,
+
+        "current_subtopic": None,
+
+        "completed_topics": [],
+
+        "completed_subtopics": [],
+
+        "completed_problem_ids": [],
+
+        "difficulty": "Easy",
+
+        "mode": "normal",
+
+        "active_problem_id": None,
+
+        "active_remediation": None,
+
+        "remediation_queue": [],
+
+        "created_at": now,
+
+        "updated_at": now,
+    }
+
+    await roadmaps_collection.insert_one(
+        roadmap
+    )
+
+    return Roadmap(
+        **roadmap
+    )
+    
+async def add_remediation_to_roadmap(
+    user_id: str,
+    problem_ids: List[str],
+) -> None:
+    """
+    Add generated remediation problems to
+    the user's remediation queue.
+    """
+
+    roadmap = await get_or_create_roadmap(
+        user_id
+    )
+
+    queue = roadmap.remediation_queue.copy()
+
+    for pid in problem_ids:
+
+        if pid not in queue:
+            queue.append(pid)
+
+    await roadmaps_collection.update_one(
+
+        {
+            "user_id": user_id
+        },
+
+        {
+            "$set": {
+
+                "mode": "remediation",
+
+                "remediation_queue": queue,
+
+                "active_remediation": (
+                    queue[0]
+                    if queue
+                    else None
+                ),
+
+                "updated_at": datetime.now(
+                    timezone.utc
+                ),
+            }
+        }
+    )
+async def advance_roadmap(
+    user_id: str,
+    problem_id: str,
+    correct: bool,
+) -> None:
+    """
+    Update roadmap after every submission.
+    """
+
+    roadmap = await get_or_create_roadmap(
+        user_id
+    )
+
+    profile = await get_or_create_skill_profile(
+        user_id
+    )
+
+    stats = profile.stats
+
+    completed = roadmap.completed_problem_ids.copy()
+
+    queue = roadmap.remediation_queue.copy()
+
+    ####################################################
+    # Correct Submission
+    ####################################################
+
+    if correct:
+
+        stats.problems_solved += 1
+
+        if problem_id not in completed:
+            completed.append(problem_id)
+
+        if problem_id in queue:
+
+            queue.remove(problem_id)
+
+            stats.remediation_completed += 1
+
+        active = (
+            queue[0]
+            if queue
+            else None
+        )
+
+        mode = (
+            "remediation"
+            if queue
+            else "normal"
+        )
+
+    ####################################################
+    # Failed Submission
+    ####################################################
+
+    else:
+
+        stats.problems_failed += 1
+
+        active = roadmap.active_remediation
+
+        mode = roadmap.mode
+
+    ####################################################
+    # Difficulty Progression
+    ####################################################
+
+    avg = average_mastery(
+        profile
+    )
+
+    difficulty = difficulty_for_mastery(
+        avg
+    )
+
+    ####################################################
+    # Update Skill Profile
+    ####################################################
+
+    await skill_profiles_collection.update_one(
+
+        {
+            "user_id": user_id
+        },
+
+        {
+            "$set": {
+
+                "stats": stats.model_dump(),
+
+                "updated_at": datetime.now(
+                    timezone.utc
+                ),
+            }
+        }
+    )
+
+    ####################################################
+    # Update Roadmap
+    ####################################################
+
+    await roadmaps_collection.update_one(
+
+        {
+            "user_id": user_id
+        },
+
+        {
+            "$set": {
+
+                "completed_problem_ids":
+                    completed,
+
+                "remediation_queue":
+                    queue,
+
+                "active_remediation":
+                    active,
+
+                "difficulty":
+                    difficulty,
+
+                "mode":
+                    mode,
+
+                "updated_at":
+                    datetime.now(
+                        timezone.utc
+                    ),
+            }
+        }
+    )
 
 
+
+async def recommend_next_problem(
+    user_id: str,
+) -> RoadmapDecision:
+    """
+    Recommendation Priority
+
+    1. Active remediation
+    2. Continue current topic
+    3. Weakest skill
+    4. Next curriculum topic
+    5. Any remaining problem
+    """
+
+    roadmap = await get_or_create_roadmap(
+        user_id
+    )
+
+    profile = await get_or_create_skill_profile(
+        user_id
+    )
+
+    completed = set(
+        roadmap.completed_problem_ids
+    )
+
+    ##################################################
+    # 1. Active Remediation
+    ##################################################
+
+    if roadmap.active_remediation:
+
+        try:
+
+            problem = await generated_problems_collection.find_one(
+                {
+                    "_id": ObjectId(
+                        roadmap.active_remediation
+                    )
+                }
+            )
+
+            if problem:
+
+                return RoadmapDecision(
+
+                    action="remediation",
+
+                    next_topic=problem["topic"],
+
+                    next_subtopic=problem["subtopic"],
+
+                    next_problem_id=str(
+                        problem["_id"]
+                    ),
+
+                    recommended_difficulty=roadmap.difficulty,
+
+                    reason="Complete your remediation before continuing."
+                )
+
+        except Exception:
+            pass
+
+    ##################################################
+    # 2. Continue Current Topic
+    ##################################################
+
+    if roadmap.current_topic:
+
+        async for problem in problems_collection.find(
+
+            {
+
+                "topic": roadmap.current_topic,
+
+                "difficulty": roadmap.difficulty,
+
+            }
+
+        ):
+
+            if str(problem["_id"]) in completed:
+                continue
+
+            pid = str(problem["_id"])
+
+            await roadmaps_collection.update_one(
+
+                {
+                    "user_id": user_id
+                },
+
+                {
+                    "$set": {
+
+                        "current_subtopic":
+                            problem["subtopic"],
+
+                        "active_problem_id":
+                            pid,
+
+                        "updated_at":
+                            datetime.now(
+                                timezone.utc
+                            ),
+                    }
+                }
+            )
+
+            return RoadmapDecision(
+
+                action="continue",
+
+                next_topic=problem["topic"],
+
+                next_subtopic=problem["subtopic"],
+
+                next_problem_id=pid,
+
+                recommended_difficulty=roadmap.difficulty,
+
+                reason="Continue your current learning path."
+            )
+
+    ##################################################
+    # 3. Weakest Skill
+    ##################################################
+
+    weakest_topic = None
+    weakest_subtopic = None
+    lowest = 101
+
+    for topic, subtopics in profile.mastery_scores.items():
+
+        for subtopic, score in subtopics.items():
+
+            if score < lowest:
+
+                lowest = score
+
+                weakest_topic = topic
+
+                weakest_subtopic = subtopic
+
+    if (
+
+        weakest_topic
+
+        and
+
+        lowest < MASTERY_THRESHOLD
+
+    ):
+
+        async for problem in problems_collection.find(
+
+            {
+
+                "topic": weakest_topic,
+
+                "subtopic": weakest_subtopic,
+
+                "difficulty": roadmap.difficulty,
+
+            }
+
+        ):
+
+            if str(problem["_id"]) in completed:
+                continue
+
+            pid = str(problem["_id"])
+
+            await roadmaps_collection.update_one(
+
+                {
+
+                    "user_id": user_id
+
+                },
+
+                {
+
+                    "$set": {
+
+                        "current_topic":
+                            weakest_topic,
+
+                        "current_subtopic":
+                            weakest_subtopic,
+
+                        "active_problem_id":
+                            pid,
+
+                        "updated_at":
+                            datetime.now(
+                                timezone.utc
+                            ),
+                    }
+
+                }
+
+            )
+
+            return RoadmapDecision(
+
+                action="recommend",
+
+                next_topic=weakest_topic,
+
+                next_subtopic=weakest_subtopic,
+
+                next_problem_id=pid,
+
+                recommended_difficulty=roadmap.difficulty,
+
+                reason=(
+                    f"Strengthen {weakest_subtopic} "
+                    f"(Mastery {lowest}%)."
+                ),
+            )
+
+    ##################################################
+    # 4. Curriculum Progression
+    ##################################################
+
+    topic = next_topic(
+        roadmap.current_topic
+    )
+
+    while topic:
+
+        async for problem in problems_collection.find(
+
+            {
+
+                "topic": topic,
+
+                "difficulty": roadmap.difficulty,
+
+            }
+
+        ):
+
+            if str(problem["_id"]) in completed:
+                continue
+
+            pid = str(problem["_id"])
+
+            await roadmaps_collection.update_one(
+
+                {
+
+                    "user_id": user_id
+
+                },
+
+                {
+
+                    "$set": {
+
+                        "current_topic": topic,
+
+                        "current_subtopic":
+                            problem["subtopic"],
+
+                        "active_problem_id":
+                            pid,
+
+                        "updated_at":
+                            datetime.now(
+                                timezone.utc
+                            ),
+                    }
+
+                }
+
+            )
+
+            return RoadmapDecision(
+
+                action="recommend",
+
+                next_topic=topic,
+
+                next_subtopic=problem["subtopic"],
+
+                next_problem_id=pid,
+
+                recommended_difficulty=roadmap.difficulty,
+
+                reason=f"Start learning {topic}.",
+            )
+
+        topic = next_topic(
+            topic
+        )
+
+    ##################################################
+    # 5. Any Remaining Problem
+    ##################################################
+
+    async for problem in problems_collection.find(
+
+        {
+
+            "difficulty":
+                roadmap.difficulty
+
+        }
+
+    ):
+
+        if str(problem["_id"]) in completed:
+            continue
+
+        return RoadmapDecision(
+
+            action="recommend",
+
+            next_topic=problem["topic"],
+
+            next_subtopic=problem["subtopic"],
+
+            next_problem_id=str(
+                problem["_id"]
+            ),
+
+            recommended_difficulty=roadmap.difficulty,
+
+            reason="Recommended remaining problem.",
+        )
+
+    ##################################################
+    # Finished
+    ##################################################
+
+    return RoadmapDecision(
+
+        action="complete",
+
+        reason=(
+            "Congratulations! "
+            "You have completed all available problems."
+        ),
+    )
+    
 async def update_skill_score(
     user_id: str,
     topic: str,
     subtopic: str,
     delta: int,
-) -> SkillUpdateResult:
-    profile = await get_or_create_skill_profile(user_id)
-    scores = profile.mastery_scores
+    solved: bool,
+    remediation: bool = False,
+):
+    """
+    Update mastery score and user statistics.
+    """
 
-    scores.setdefault(topic, {})
-    scores[topic].setdefault(subtopic, 0)
-
-    current = scores[topic][subtopic]
-    new_score = max(0, min(100, current + delta))
-    scores[topic][subtopic] = new_score
-
-    await skill_profiles_collection.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "mastery_scores": scores,
-                "updated_at": datetime.now(timezone.utc),
-            }
-        }
-    )
-
-    return SkillUpdateResult(
-        topic=topic,
-        subtopic=subtopic,
-        previous_score=current,
-        new_score=new_score,
-        delta=delta,
-    )
-
-
-async def add_remediation_to_roadmap(
-    user_id: str,
-    problem_ids: List[str],
-) -> None:
-    roadmap = await get_or_create_roadmap(user_id)
-    queue = roadmap.remediation_queue
-    
-    for pid in problem_ids:
-        if pid not in queue:
-            queue.append(pid)
-
-    await roadmaps_collection.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "remediation_queue": queue,
-                "active_remediation": queue[0] if queue else None,
-                "mode": "remediation",
-                "updated_at": datetime.now(timezone.utc),
-            }
-        }
-    )
-
-
-async def advance_roadmap(user_id: str, problem_id: str, correct: bool) -> None:
-    """Advance the roadmap state based on submission correctness."""
-    roadmap = await get_or_create_roadmap(user_id)
     profile = await get_or_create_skill_profile(user_id)
 
-    # Update stats
-    stats = profile.stats
-    if correct:
-        stats.problems_solved += 1
-        if problem_id not in roadmap.completed_problem_ids:
-            roadmap.completed_problem_ids.append(problem_id)
-        
-        # Check if solved problem is in the remediation queue
-        if problem_id in roadmap.remediation_queue:
-            roadmap.remediation_queue.remove(problem_id)
-            stats.remediation_completed += 1
-            
-        # Update active remediation
-        roadmap.active_remediation = roadmap.remediation_queue[0] if roadmap.remediation_queue else None
-        if not roadmap.remediation_queue:
-            roadmap.mode = "normal"
+    profile.mastery_scores.setdefault(topic, {})
+    profile.mastery_scores[topic].setdefault(subtopic, 0)
+
+    current = profile.mastery_scores[topic][subtopic]
+
+    new_score = clamp_score(current + delta)
+
+    profile.mastery_scores[topic][subtopic] = new_score
+
+    if solved:
+        profile.stats.problems_solved += 1
     else:
-        stats.problems_failed += 1
+        profile.stats.problems_failed += 1
+
+    if remediation and solved:
+        profile.stats.remediation_completed += 1
 
     await skill_profiles_collection.update_one(
         {"user_id": user_id},
         {
             "$set": {
-                "stats": stats.model_dump(),
-                "updated_at": datetime.now(timezone.utc)
+                "mastery_scores": profile.mastery_scores,
+                "stats": profile.stats.model_dump(),
+                "updated_at": datetime.now(timezone.utc),
             }
-        }
+        },
     )
 
-    await roadmaps_collection.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "completed_problem_ids": roadmap.completed_problem_ids,
-                "remediation_queue": roadmap.remediation_queue,
-                "active_remediation": roadmap.active_remediation,
-                "mode": roadmap.mode,
-                "updated_at": datetime.now(timezone.utc)
-            }
-        }
-    )
+    return profile
 
+def average_mastery(profile: SkillProfile) -> float:
+    scores = []
 
-async def recommend_next_problem(user_id: str) -> RoadmapDecision:
-    """
-    Priority-based recommendation:
-    1. Active remediation problem
-    2. Weakest skill (mastery < 70%): search generated first, then standard
-    3. Continue current topic
-    4. New topic / Fallback
-    """
-    roadmap = await get_or_create_roadmap(user_id)
-    profile = await get_or_create_skill_profile(user_id)
+    for topic in profile.mastery_scores.values():
+        scores.extend(topic.values())
 
-    MASTERY_THRESHOLD = 70
-    completed_ids = set(roadmap.completed_problem_ids)
+    if not scores:
+        return 0
 
-    # 1. Active Remediation
-    if roadmap.active_remediation:
-        # Search in generated problems first
-        problem = None
-        try:
-            problem = await generated_problems_collection.find_one({"_id": ObjectId(roadmap.active_remediation)})
-        except Exception:
-            pass
-            
-        if not problem:
-            # Check standard problems just in case
-            try:
-                problem = await problems_collection.find_one({"_id": ObjectId(roadmap.active_remediation)})
-            except Exception:
-                pass
-
-        if problem:
-            return RoadmapDecision(
-                action="remediation",
-                next_topic=problem.get("topic"),
-                next_subtopic=problem.get("subtopic"),
-                next_problem_id=str(problem["_id"]),
-                recommended_difficulty=roadmap.difficulty,
-                reason="Please solve active remediation problem to unlock roadmap progress."
-            )
-
-    # 2. Find Weakest Skill < 70%
-    mastery_scores = profile.mastery_scores
-    weakest_topic = None
-    weakest_subtopic = None
-    lowest_score = 101
-
-    for topic, subtopics in mastery_scores.items():
-        for subtopic, score in subtopics.items():
-            if score < lowest_score:
-                lowest_score = score
-                weakest_topic = topic
-                weakest_subtopic = subtopic
-
-    if weakest_topic and weakest_subtopic and lowest_score < MASTERY_THRESHOLD:
-        # Check generated remediation problems first
-        gen_prob = await generated_problems_collection.find_one({
-            "user_id": user_id,
-            "subtopic": weakest_subtopic
-        })
-        if gen_prob:
-            # Set as active remediation
-            pid = str(gen_prob["_id"])
-            await roadmaps_collection.update_one(
-                {"user_id": user_id},
-                {
-                    "$set": {
-                        "active_remediation": pid,
-                        "mode": "remediation",
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            return RoadmapDecision(
-                action="remediation",
-                next_topic=weakest_topic,
-                next_subtopic=weakest_subtopic,
-                next_problem_id=pid,
-                recommended_difficulty=roadmap.difficulty,
-                reason=f"Remediation generated for weak skill '{weakest_subtopic}' (score: {lowest_score}%)."
-            )
-
-        # Check standard problems in that weak subtopic
-        db_query = {
-            "topic": weakest_topic,
-            "subtopic": weakest_subtopic,
-            "difficulty": roadmap.difficulty
-        }
-        # Filter completed
-        uncompleted_probs = []
-        async for p in problems_collection.find(db_query):
-            if str(p["_id"]) not in completed_ids:
-                uncompleted_probs.append(p)
-                
-        if uncompleted_probs:
-            target_prob = uncompleted_probs[0]
-            pid = str(target_prob["_id"])
-            await roadmaps_collection.update_one(
-                {"user_id": user_id},
-                {
-                    "$set": {
-                        "current_topic": weakest_topic,
-                        "current_subtopic": weakest_subtopic,
-                        "active_problem_id": pid,
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            return RoadmapDecision(
-                action="recommend",
-                next_topic=weakest_topic,
-                next_subtopic=weakest_subtopic,
-                next_problem_id=pid,
-                recommended_difficulty=roadmap.difficulty,
-                reason=f"Recommended practice problem for weak skill '{weakest_subtopic}' (score: {lowest_score}%)."
-            )
-
-    # 3. Continue Current Topic
-    if roadmap.current_topic:
-        uncompleted_in_topic = []
-        async for p in problems_collection.find({"topic": roadmap.current_topic, "difficulty": roadmap.difficulty}):
-            if str(p["_id"]) not in completed_ids:
-                uncompleted_in_topic.append(p)
-                
-        if uncompleted_in_topic:
-            target_prob = uncompleted_in_topic[0]
-            pid = str(target_prob["_id"])
-            await roadmaps_collection.update_one(
-                {"user_id": user_id},
-                {
-                    "$set": {
-                        "current_subtopic": target_prob.get("subtopic"),
-                        "active_problem_id": pid,
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            return RoadmapDecision(
-                action="continue",
-                next_topic=roadmap.current_topic,
-                next_subtopic=target_prob.get("subtopic"),
-                next_problem_id=pid,
-                recommended_difficulty=roadmap.difficulty,
-                reason=f"Continue solving problems in your current topic '{roadmap.current_topic}'."
-            )
-
-    # 4. New Topic Recommendation
-    # Find any uncompleted problems in any topic
-    all_uncompleted = []
-    async for p in problems_collection.find({"difficulty": roadmap.difficulty}):
-        if str(p["_id"]) not in completed_ids:
-            all_uncompleted.append(p)
-            
-    if all_uncompleted:
-        target_prob = all_uncompleted[0]
-        pid = str(target_prob["_id"])
-        await roadmaps_collection.update_one(
-            {"user_id": user_id},
-            {
-                "$set": {
-                    "current_topic": target_prob.get("topic"),
-                    "current_subtopic": target_prob.get("subtopic"),
-                    "active_problem_id": pid,
-                    "updated_at": datetime.now(timezone.utc)
-                }
-            }
-        )
-        return RoadmapDecision(
-            action="recommend",
-            next_topic=target_prob.get("topic"),
-            next_subtopic=target_prob.get("subtopic"),
-            next_problem_id=pid,
-            recommended_difficulty=roadmap.difficulty,
-            reason=f"Recommended new topic: '{target_prob.get('topic')}'."
-        )
-
-    # 5. Fallback - Starter/Any Easy problem
-    starter_problem = await problems_collection.find_one({"difficulty": "Easy"})
-    if starter_problem:
-        pid = str(starter_problem["_id"])
-        return RoadmapDecision(
-            action="recommend",
-            next_topic=starter_problem.get("topic"),
-            next_subtopic=starter_problem.get("subtopic"),
-            next_problem_id=pid,
-            recommended_difficulty="Easy",
-            reason="All current difficulty problems completed! Starter problem recommended."
-        )
-
-    return RoadmapDecision(
-        action="recommend",
-        reason="No problems found in database."
-    )
+    return sum(scores) / len(scores)

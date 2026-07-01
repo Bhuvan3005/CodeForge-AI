@@ -12,6 +12,7 @@ import logging
 from schemas.submissions import (
     SubmissionCreate,
     SubmissionResponse,
+    RoadmapDecision,
 )
 
 from services.auth import get_current_user
@@ -81,6 +82,9 @@ async def submit_code(
         # roadmap
         "next_action": None,
 
+        # Phase 2 – AI Practice
+        "ai_practice_problem": None,
+
         # optional
         "submission_id": None,
     }
@@ -108,10 +112,12 @@ async def submit_code(
             detail="Analysis step failed"
         )
 
-    roadmap_decision = (
-        final_state.get("roadmap")
-        or final_state.get("next_action")
-    )
+    roadmap_decision = final_state.get("next_action")
+    if not roadmap_decision:
+        roadmap_decision = RoadmapDecision(
+            action="recommend",
+            reason="No next action available.",
+        )
 
     return SubmissionResponse(
         submission_id=(
@@ -137,9 +143,13 @@ async def submit_code(
             "remediation_problems"
         ),
 
+        ai_practice_problem=final_state.get(
+            "ai_practice_problem"
+        ),
+
         skill_profile=final_state.get(
             "skill_profile"
         ),
 
         roadmap=roadmap_decision,
-    )
+    )

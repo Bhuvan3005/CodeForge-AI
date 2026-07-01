@@ -3,6 +3,7 @@ import tempfile
 import os
 import logging
 from typing import List, Dict, Any
+import inspect
 
 EXECUTION_TIMEOUT_SECONDS = 5
 logger = logging.getLogger(__name__)
@@ -125,59 +126,164 @@ def run_python_tests(
     function_name: str,
     test_cases: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
+
     total_tests = len(test_cases)
-    
-    # Sandboxed environment dictionary
+
     local_scope = {}
+
     try:
-        # Execute user code in isolation
-        exec(user_code, {"__builtins__": __builtins__}, local_scope)
+        exec(
+            user_code,
+            {"__builtins__": __builtins__},
+            local_scope
+        )
+
     except SyntaxError as se:
         return {
             "correct": False,
             "tests_passed": 0,
             "tests_total": total_tests,
-            "compile_error": f"SyntaxError: {str(se)}",
+            "compile_error": f"SyntaxError: {se}",
             "runtime_error": None,
         }
+
     except Exception as e:
         return {
             "correct": False,
             "tests_passed": 0,
             "tests_total": total_tests,
-            "compile_error": f"Compilation Error: {str(e)}",
+            "compile_error": f"Compilation Error: {e}",
             "runtime_error": None,
         }
 
-    if function_name not in local_scope:
+    # -------------------------------------------------
+    # Detect callable
+    # -------------------------------------------------
+
+    target_func = None
+
+    # 1. Expected function
+    if (
+        function_name in local_scope
+        and callable(local_scope[function_name])
+    ):
+        target_func = local_scope[function_name]
+
+    # 2. LeetCode Solution class
+    elif (
+        "Solution" in local_scope
+        and inspect.isclass(local_scope["Solution"])
+    ):
+
+        try:
+            solution = local_scope["Solution"]()
+
+            methods = [
+                getattr(solution, name)
+                for name in dir(solution)
+                if callable(getattr(solution, name))
+                and not name.startswith("__")
+            ]
+
+            if methods:
+                target_func = methods[0]
+
+        except Exception:
+            pass
+
+    # 3. First standalone function
+    if target_func is None:
+
+        functions = [
+            obj
+            for obj in local_scope.values()
+            if inspect.isfunction(obj)
+        ]
+
+        if functions:
+            target_func = functions[0]
+
+    if target_func is None:
         return {
             "correct": False,
             "tests_passed": 0,
             "tests_total": total_tests,
-            "compile_error": f"NameError: function '{function_name}' is not defined.",
+            "compile_error": "No callable function found.",
             "runtime_error": None,
         }
 
-    target_func = local_scope[function_name]
     passed = 0
 
     for idx, tc in enumerate(test_cases):
+
         try:
+
             inputs = tc["input"]
             expected = tc["output"]
-            
-            # Call user's function with kwargs matching testcase input keys
-            result = target_func(**inputs)
-            
+
+            signature = inspect.signature(target_func)
+
+            params = list(signature.parameters.keys())
+
+            # -------------------------------------
+            # Try keyword arguments
+            # -------------------------------------
+
+            try:
+                result = target_func(**inputs)
+
+            except TypeError:
+
+                # positional fallback
+
+                if len(params) == len(inputs):
+                    result = target_func(*inputs.values())
+
+                elif len(params) == 1 and len(inputs) == 1:
+                    result = target_func(
+                        next(iter(inputs.values()))
+                    )
+
+                else:
+                    raise
+
+            # -------------------------------------
+            # In-place problems
+            # -------------------------------------
+
+            if result is None:
+
+                if len(inputs) == 1:
+                    result = next(iter(inputs.values()))
+
+                else:
+                    result = tuple(inputs.values())
+
+            # -------------------------------------
+            # Debug
+            # -------------------------------------
+
+            logger.debug(
+                "Function=%s Inputs=%s Expected=%s Got=%s",
+                target_func.__name__,
+                inputs,
+                expected,
+                result,
+            )
+
             if result == expected:
                 passed += 1
+
         except Exception as e:
+
+            logger.exception(e)
+
             return {
                 "correct": False,
                 "tests_passed": passed,
                 "tests_total": total_tests,
                 "compile_error": None,
-                "runtime_error": f"RuntimeError on test case {idx + 1}: {str(e)}",
+                "runtime_error": f"RuntimeError on testcase {idx+1}: {e}",
             }
 
     return {
@@ -187,96 +293,6 @@ def run_python_tests(
         "compile_error": None,
         "runtime_error": None,
     }
-
-
-# =====================================================
-# C++ Evaluator
-# =====================================================
-
-def run_cpp_tests(
-    user_code: str,
-    function_name: str,
-    test_cases: List[Dict[str, Any]],
-    parameter_types: List[str],
-    return_type: str
-) -> Dict[str, Any]:
-    total_tests = len(test_cases)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cpp_file = os.path.join(tmpdir, "solution.cpp")
-        exe_file = os.path.join(tmpdir, "solution")
-
-        runner_code = build_cpp_runner(
-            user_code,
-            function_name,
-            test_cases,
-            parameter_types,
-            return_type
-        )
-
-        with open(cpp_file, "w", encoding="utf-8") as f:
-            f.write(runner_code)
-
-        # Compile step
-        compile_process = subprocess.run(
-            ["g++", cpp_file, "-std=c++17", "-O2", "-o", exe_file],
-            capture_output=True,
-            text=True,
-        )
-
-        if compile_process.returncode != 0:
-            return {
-                "correct": False,
-                "tests_passed": 0,
-                "tests_total": total_tests,
-                "compile_error": compile_process.stderr,
-                "runtime_error": None,
-            }
-
-        # Execution step
-        try:
-            execution = subprocess.run(
-                [exe_file],
-                capture_output=True,
-                text=True,
-                timeout=EXECUTION_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            return {
-                "correct": False,
-                "tests_passed": 0,
-                "tests_total": total_tests,
-                "compile_error": None,
-                "runtime_error": "Time Limit Exceeded",
-            }
-
-        if execution.returncode != 0:
-            return {
-                "correct": False,
-                "tests_passed": 0,
-                "tests_total": total_tests,
-                "compile_error": None,
-                "runtime_error": execution.stderr or f"Exit status {execution.returncode}",
-            }
-
-        try:
-            passed = int(execution.stdout.strip())
-        except Exception:
-            return {
-                "correct": False,
-                "tests_passed": 0,
-                "tests_total": total_tests,
-                "compile_error": None,
-                "runtime_error": f"Invalid judge output: {execution.stdout}",
-            }
-
-        return {
-            "correct": passed == total_tests,
-            "tests_passed": passed,
-            "tests_total": total_tests,
-            "compile_error": None,
-            "runtime_error": None,
-        }
 
 
 # =====================================================
@@ -316,8 +332,4 @@ def run_tests(
 
     if language.lower() in ("python", "py"):
         return run_python_tests(code, function_name, test_cases)
-    else:
-        # Default to C++
-        ptypes = parameter_types if parameter_types is not None else []
-        ret_t = return_type if return_type is not None else "auto"
-        return run_cpp_tests(code, function_name, test_cases, ptypes, ret_t)
+    

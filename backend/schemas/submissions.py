@@ -126,6 +126,10 @@ class AnalysisResult(BaseModel):
     optimization_possible: bool = False
     optimization_reason: Optional[str] = None
 
+    # Phase 4 – Strengths & Weaknesses
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+
 
 
 class WeaknessResult(BaseModel):
@@ -182,10 +186,8 @@ class RemediationProblem(BaseModel):
 
     description: str
 
-    # NEW
     function_name: str
 
-    # NEW
     function_signature: str
 
     constraints: List[str]
@@ -206,6 +208,12 @@ class RemediationProblem(BaseModel):
     weakness: str
 
     user_id: str
+
+    reason: str = ""
+    learning_objective: str = ""
+    status: Literal["Pending", "Completed"] = "Pending"
+    generated_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
     @model_serializer(mode="wrap")
     def serialize_model(self, handler):
@@ -237,6 +245,9 @@ class SubmissionResponse(BaseModel):
     remediation_problems: Optional[
         List[RemediationProblem]
     ] = None
+
+    # Phase 2 – AI Practice for correct submissions
+    ai_practice_problem: Optional[RemediationProblem] = None
 
     # Skill Update Node
     skill_profile: Optional[

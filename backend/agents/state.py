@@ -98,3 +98,9 @@ class MentorState(TypedDict):
     # =====================================================
 
     submission_id: Optional[str]
+
+    # =====================================================
+    # Phase 2 – AI Practice
+    # =====================================================
+
+    ai_practice_problem: Optional[RemediationProblem]

@@ -11,6 +11,22 @@ from services.auth import get_current_user
 from services.roadmap import get_or_create_skill_profile, get_or_create_roadmap
 from database import generated_problems_collection
 from schemas.submissions import SkillProfile, Roadmap, RemediationResponse, RemediationProblem
+from utils.mongo import normalize_mongo_doc
+
+
+def _prepare_remediation_doc(doc: dict) -> dict:
+    """Normalize and fill defaults for generated remediation problems."""
+    prepared = normalize_mongo_doc(doc, id_field="problem_id") or {}
+    prepared.setdefault("expected_pattern", "")
+    prepared.setdefault("expected_time_complexity", "")
+    prepared.setdefault("expected_space_complexity", "")
+    prepared.setdefault("examples", [])
+    prepared.setdefault("visible_testcases", [])
+    prepared.setdefault("hidden_testcases", [])
+    prepared.setdefault("constraints", [])
+    prepared.setdefault("generated_for", prepared.get("subtopic", "General"))
+    prepared.setdefault("weakness", prepared.get("expected_pattern", "General"))
+    return prepared
 
 router = APIRouter(prefix="/roadmap", tags=["Roadmap"])
 
@@ -61,15 +77,9 @@ async def get_remediation_problems(
         try:
             prob = await generated_problems_collection.find_one({"_id": ObjectId(pid)})
             if prob:
-                prob["problem_id"] = str(prob["_id"])
-                # Populate mock/default values for any missing fields to guarantee schema validation
-                prob.setdefault("expected_pattern", "")
-                prob.setdefault("expected_time_complexity", "")
-                prob.setdefault("expected_space_complexity", "")
-                prob.setdefault("examples", [])
-                prob.setdefault("visible_testcases", [])
-                prob.setdefault("hidden_testcases", [])
-                problems.append(prob)
+                problems.append(
+                    RemediationProblem(**_prepare_remediation_doc(prob))
+                )
         except Exception:
             continue
 
@@ -100,3 +110,27 @@ async def get_dashboard(
         "active_problem_id": roadmap.active_problem_id,
         "active_remediation_id": roadmap.active_remediation,
     }
+
+
+@router.get("/ai-practice/{topic}", response_model=List[RemediationProblem])
+async def get_ai_practice_for_topic(
+    topic: str,
+    current_user=Depends(get_current_user),
+):
+    """Return the user's full AI practice history for a topic, newest first."""
+    user_id = str(current_user["_id"])
+
+    docs = await generated_problems_collection.find(
+        {"user_id": user_id, "topic": topic},
+        sort=[("created_at", -1)],
+    ).to_list(None)
+
+    problems = []
+    for doc in docs:
+        prepared = _prepare_remediation_doc(doc)
+        try:
+            problems.append(RemediationProblem(**prepared))
+        except Exception:
+            continue
+
+    return problems
